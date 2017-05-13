@@ -23,6 +23,7 @@ int openPipe(char* pipeFileName);
 long readFromPipe(int pipe);
 ssize_t getFileSize(char* file);
 int determinateNumberOfCounters(ssize_t fileSize);
+void killAllProcesses();
 
 volatile int currentPIDWrite = 0;
 volatile pid_t readySubprocessArray[MAX_NUMBER_OF_PROCESSES]; 
@@ -71,7 +72,13 @@ int main(int argc, char** argv)
 	{
 	    while(currentPIDRead < currentPIDWrite)
 		{
-			charCounter += readFromPID(readySubprocessArray[currentPIDRead]);
+			long temp = readFromPID(readySubprocessArray[currentPIDRead]);
+			if(temp == -1)
+			{
+				killAllProcesses();
+				return -1;
+			}
+			charCounter += temp;
 			currentPIDRead++;
 		}
 		wpid = wait(&wstatus);
@@ -79,7 +86,7 @@ int main(int argc, char** argv)
 	}while (wpid != -1 || ( wpid == -1 && errno != ECHILD));
 
 	printf("end %ld\n", charCounter);
-	for(int i=0;i<MAX_NUMBER_OF_PROCESSES;i++)
+	for(int i=0;i<MAX_NUMBER_OF_PROCESSES && subprocessArray[i]!=0;i++)
 		printf("%d\t%d\n", subprocessArray[i], readySubprocessArray[i]);
 	
 	return 0;
@@ -178,6 +185,7 @@ int createCounter(char *charToCount, char* fileName, int i, off_t blockSize, off
 	if(pid<0)
 	{
 		printf("Fork failed - %s\n", strerror(errno));
+		killAllProcesses();
 		return -1;
 	}
 	else if(pid == 0)
@@ -194,7 +202,7 @@ int createCounter(char *charToCount, char* fileName, int i, off_t blockSize, off
 		char *argv[] = {"counter", charToCount, fileName, offsetStr , sizeStr, istr, NULL};
 		if(execv(argv[0], argv) == -1)
 			printf("execute counter failed on procees number %d - %s\n", i, strerror(errno));
-		
+		killAllProcesses();
 		return -1;
 	}
 	subprocessArray[i] = pid;
@@ -204,4 +212,15 @@ void mySignalHandler(int signum, siginfo_t* info, void* ptr)
 {
 	readySubprocessArray[currentPIDWrite] = info->si_pid;
 	currentPIDWrite++;
+}
+
+void killAllProcesses()
+{
+	printf("kill all sub processes!\n");
+	for(int i=0;i<MAX_NUMBER_OF_PROCESSES;i++)
+	{
+		if(subprocessArray[i] == 0)
+			break;
+		kill(subprocessArray[i],SIGKILL);
+	}
 }
