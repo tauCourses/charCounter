@@ -8,7 +8,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <stdlib.h>
-
+#include <math.h>
 
 #define MAX_NUMBER_OF_PROCESSES 16
 #define NUMBER_OR_ARGUMENTS 3
@@ -16,7 +16,7 @@
 
 
 void mySignalHandler(int signum, siginfo_t* info, void* ptr);
-int createCounter(char *charToCount, char* fileName, int i);
+int createCounter(char *charToCount, char* fileName, int i, off_t blockSize, off_t blockOffset);
 int setSignalHandler();
 long readFromPID(int pid);
 int openPipe(char* pipeFileName);
@@ -40,27 +40,42 @@ int main(int argc, char** argv)
 		return -1;
 
 	ssize_t fileSize = getFileSize(argv[2]);
+	if(fileSize == -1)
+		return -1;
+	
+	printf("file size %zu\n", fileSize);
 
 	int numberOfProcesss = determinateNumberOfCounters(fileSize);
-
-	for(int i=0; i<numberOfProcesss; i++)
-		if(createCounter(argv[1], argv[2], i) == -1)
-			return -1;
-
-	int currentPIDRead = 0, wstatus;
-	for(int i=0; i<numberOfProcesss; i++)
+	printf("numberOfProcesss - %d\n", numberOfProcesss);
+	off_t blockSize = fileSize/numberOfProcesss;
+	off_t offset = 0;
+	for(int i=0; i<numberOfProcesss-1; i++)
 	{
-		do
-		{
-			wait(&wstatus) != -1;
-			if(currentPIDRead < currentPIDWrite)
-			{
-				charCounter += readFromPID(pidArray[currentPIDRead]);
-				currentPIDRead++;
-			}
-		}while(!WIFEXITED(wstatus) && !WIFSIGNALED(wstatus));
+		printf("process %d offset %lu size %lu\n", i, offset, blockSize);
+		if(createCounter(argv[1], argv[2], i, blockSize, offset) == -1)
+			return -1;
+		offset+=blockSize;
 	}
-	
+	printf("last process offset %lu size %lu\n", offset, fileSize - offset);
+	if(createCounter(argv[1], argv[2], numberOfProcesss-1, fileSize - offset, offset) == -1) //the rest
+		return -1;
+
+	// printf("ECHILD - %d", ECHILD);
+	// printf("EINTR - %d", EINTR);
+	// printf("EINVAL - %d", EINVAL);
+	// //printf("ECHILD - %d", ECHILD);
+	int currentPIDRead = 0, wstatus, wpid;
+	do
+	{
+	    while(currentPIDRead < currentPIDWrite)
+		{
+			charCounter += readFromPID(pidArray[currentPIDRead]);
+			currentPIDRead++;
+		}
+		wpid = wait(&wstatus);
+	//	printf("%d %d\n", wpid, errno);
+	}while (wpid != -1 || ( wpid == -1 && errno != ECHILD));
+
 	printf("end %ld\n", charCounter);
 	return 0;
 }
@@ -117,16 +132,24 @@ long readFromPipe(int pipe)
 }
 int determinateNumberOfCounters(ssize_t fileSize)
 {
-	int numberOfCounters = fileSize/7;
-
+	if(fileSize<1024)
+		return 1;
+	int numberOfCounters = (int)fileSize/(1024*4);//(int)(sqrt(fileSize)+0.5);
+	printf("sqrt %d\n", numberOfCounters);
 	if(numberOfCounters > MAX_NUMBER_OF_PROCESSES)
 		numberOfCounters = MAX_NUMBER_OF_PROCESSES;
-	return 4;
+	return numberOfCounters;
 }
 
 ssize_t getFileSize(char* file)
 {
-	return 1024;
+	struct stat fileStat;
+	if(stat(file, &fileStat) == -1)
+	{
+		printf("Failed to open file - %s\n", strerror(errno));
+		return -1;
+	}
+	return fileStat.st_size;
 }
 
 int setSignalHandler()
@@ -143,7 +166,7 @@ int setSignalHandler()
 	return 0;
 }
 
-int createCounter(char *charToCount, char* fileName, int i)
+int createCounter(char *charToCount, char* fileName, int i, off_t blockSize, off_t blockOffset)
 {
 	pid_t pid = fork();
 	if(pid<0)
@@ -153,10 +176,16 @@ int createCounter(char *charToCount, char* fileName, int i)
 	}
 	else if(pid == 0)
 	{
-		char str[10]; 
-		sprintf(str, "%d", i);
+		char istr[10]; 
+		sprintf(istr, "%d", i);
 
-		char *argv[] = {"counter", charToCount, fileName, "10" , "5", str, NULL};
+		char sizeStr[20]; 
+		sprintf(sizeStr, "%ld", blockSize);
+
+		char offsetStr[20]; 
+		sprintf(offsetStr, "%ld", blockOffset);
+
+		char *argv[] = {"counter", charToCount, fileName, offsetStr , sizeStr, istr, NULL};
 		if(execv(argv[0], argv) == -1)
 			printf("execute counter failed on procees number %d - %s\n", i, strerror(errno));
 		
