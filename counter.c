@@ -1,13 +1,154 @@
 #include <stdio.h>
+#include <sys/wait.h>
+#include <sys/stat.h>
 #include <signal.h>
 #include <errno.h>
 #include <unistd.h>
+#include <string.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <fcntl.h>
+
+#define NUMBER_OF_ARGUMENTS 6
+#define basePipeFileName "/tmp/%d"
+
+int parseOff_t(char* str, off_t* arg);
+int openFile(char* fileName);
+long countChar(int file, char c, off_t offset, off_t size);
+int sendSignal(int sleepTime);
+int openPipe(char* pipeFileName);
+int writeToPipe(int pipe,long charCounter);	
+int closePipe(int pipe, char* pipeFileName);
 
 int main(int argc, char** argv)
 {
-	printf("counter! yayy\n");
-	pid_t parentPid =  getppid();
-	printf("parents pid %lu\n", (unsigned long) parentPid);
-	kill(parentPid, SIGUSR1);
-	return -1;
+	off_t blockOffset, blockSize;
+	int file, pipe;
+	char pipeFileName[80];
+
+	if(argc != NUMBER_OF_ARGUMENTS)
+	{
+		printf("Wrong number of arguments\n");
+		return -1;
+	}
+
+	if(parseOff_t(argv[3], &blockOffset) == -1)
+		return -1;
+	if(parseOff_t(argv[4], &blockSize) == -1)
+		return -1;
+	
+	file = openFile(argv[2]);
+	if(file == -1)
+		return -1;
+
+	long charCounter = countChar(file, *argv[1], blockOffset, blockSize);
+	if(charCounter == -1)
+		return -1;
+
+/*	if(close(file) == -1)
+	{
+		printf("Failed to close file - %s\n", strerror(errno));
+		return -1;
+	}*/
+
+	sprintf(pipeFileName, basePipeFileName, getpid()); 
+	
+	pipe = openPipe(pipeFileName);
+	if(pipe == -1)
+		return -1;
+
+	if(writeToPipe(pipe, charCounter) == -1)
+		return -1;
+
+	if(sendSignal(atoi(argv[5])) == -1)
+		return -1;
+ 
+	if(closePipe(pipe, pipeFileName) == -1)
+		return -1;
+
+ 	return 0;
+}
+
+int openFile(char* fileName)
+{
+	return 1;
+}
+
+long countChar(int file, char c, off_t offset, off_t size)
+{
+	return 5;
+}
+
+int sendSignal(int sleepTime)
+{
+	usleep(1000 + 5000*sleepTime);
+	if(kill(getppid(), SIGUSR1) == -1)
+	{
+		printf("Failed to send signal - %s\n", strerror(errno));
+		return -1;
+	}
+	return 0;
+}
+
+int openPipe(char* pipeFileName)
+{
+	int pipe = open(pipeFileName, O_WRONLY | O_CREAT);
+	if(pipe == -1)
+	{
+		printf("unable to open a pipe2 - %s\n", strerror(errno));
+		return -1;
+	}
+	return pipe;
+}
+
+int writeToPipe(int pipe,long charCounter)
+{
+	char buf[20];
+	sprintf(buf, "%ld", charCounter);
+	size_t bufSize = strlen(buf);
+	void *location = (void *)buf;
+	
+	do
+	{
+		ssize_t temp = write(pipe,location,bufSize);
+		if(temp <= 0)
+		{
+			printf("Error Writing to pipe: %s\n", strerror(errno));
+			return -1;	
+		}
+
+		bufSize -= temp;
+		location += temp;
+	} while(bufSize>0);
+
+	return 0;
+
+}
+
+int closePipe(int pipe, char* pipeFileName)
+{
+	sleep(1);
+	if(close(pipe) == -1)
+	{
+		printf("Failed to close pipe - %s\n", strerror(errno));
+		return -1;
+	}
+
+	if(unlink(pipeFileName) == -1)
+	{
+		printf("Failed to remove pipe file - %s\n", strerror(errno));
+		return -1;
+	}
+	return 0;
+}
+
+int parseOff_t(char* str, off_t* arg)
+{
+	if(sscanf(str, "%zu", arg) != 1)
+	{
+		printf("unable to parse %s\n",str);
+		return -1;
+	}
+	return 0;
+	
 }
