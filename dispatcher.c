@@ -25,7 +25,9 @@ ssize_t getFileSize(char* file);
 int determinateNumberOfCounters(ssize_t fileSize);
 
 volatile int currentPIDWrite = 0;
-volatile int pidArray[MAX_NUMBER_OF_PROCESSES]; 
+volatile pid_t readySubprocessArray[MAX_NUMBER_OF_PROCESSES]; 
+
+pid_t subprocessArray[MAX_NUMBER_OF_PROCESSES];
 
 int main(int argc, char** argv)
 {
@@ -69,7 +71,7 @@ int main(int argc, char** argv)
 	{
 	    while(currentPIDRead < currentPIDWrite)
 		{
-			charCounter += readFromPID(pidArray[currentPIDRead]);
+			charCounter += readFromPID(readySubprocessArray[currentPIDRead]);
 			currentPIDRead++;
 		}
 		wpid = wait(&wstatus);
@@ -77,6 +79,9 @@ int main(int argc, char** argv)
 	}while (wpid != -1 || ( wpid == -1 && errno != ECHILD));
 
 	printf("end %ld\n", charCounter);
+	for(int i=0;i<MAX_NUMBER_OF_PROCESSES;i++)
+		printf("%d\t%d\n", subprocessArray[i], readySubprocessArray[i]);
+	
 	return 0;
 }
 
@@ -130,6 +135,7 @@ long readFromPipe(int pipe)
 	}
 	return result;
 }
+
 int determinateNumberOfCounters(ssize_t fileSize)
 {
 	if(fileSize<1024)
@@ -191,10 +197,11 @@ int createCounter(char *charToCount, char* fileName, int i, off_t blockSize, off
 		
 		return -1;
 	}
+	subprocessArray[i] = pid;
 }
 
 void mySignalHandler(int signum, siginfo_t* info, void* ptr)
 {
-	pidArray[currentPIDWrite] = info->si_pid;
+	readySubprocessArray[currentPIDWrite] = info->si_pid;
 	currentPIDWrite++;
 }

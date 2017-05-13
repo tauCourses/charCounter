@@ -123,7 +123,7 @@ long countChar(int file, char c, off_t offset, off_t size)
 
 int sendSignal(int sleepTime)
 {
-	usleep(1000 + 1000*sleepTime);
+	usleep(1000*sleepTime);
 	if(kill(getppid(), SIGUSR1) == -1)
 	{
 		printf("Failed to send signal - %s\n", strerror(errno));
