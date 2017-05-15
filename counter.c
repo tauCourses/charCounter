@@ -146,7 +146,7 @@ int sendAmountToDispatcher(int waitTime, long charCounter)
 }
 int sendSignal(int sleepTime)
 {
-	usleep(1000*sleepTime*20); //each process wait a different time before sending the signal. 
+	usleep(1000*sleepTime*50); //each process wait a different time before sending the signal. 
 	if(kill(getppid(), SIGUSR1) == -1)
 	{
 		printf("Failed to send signal - %s\n", strerror(errno));
@@ -205,7 +205,7 @@ int closePipe(int pipe, char* pipeFileName)
 
 int parseOff_t(char* str, off_t* arg)
 {
-	if(sscanf(str, "%zu", arg) != 1)
+	if(sscanf(str, "%lu", arg) != 1)
 	{
 		printf("unable to parse %s\n",str);
 		return -1;
