@@ -8,7 +8,6 @@
 #include <unistd.h>
 #include <string.h>
 #include <stdlib.h>
-#include <math.h>
 
 #define MAX_NUMBER_OF_PROCESSES 16
 #define NUMBER_OR_ARGUMENTS 3
@@ -36,7 +35,6 @@ pid_t subprocessArray[MAX_NUMBER_OF_PROCESSES];
 
 int main(int argc, char** argv)
 {
-	long charCounter = 0;
 	if(argc != NUMBER_OR_ARGUMENTS)
 	{
 		printf("Wrong number of arguments\n");
@@ -50,9 +48,9 @@ int main(int argc, char** argv)
 	if(numberOfProcesss == -1)
 		return -1;
     
-    charCounter = waitForCounters(numberOfProcesss); //waits for all counters, read the data when they are ready
-    if(charCounter == -1) 
-    	return -1;
+	long charCounter = waitForCounters(numberOfProcesss); //waits for all counters, read the data when they are ready
+	if(charCounter == -1) 
+		return -1;
 	
 	printf("The number of %c in %s is %ld\n", *argv[1], argv[2], charCounter);
 		
