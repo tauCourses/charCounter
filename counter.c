@@ -9,7 +9,7 @@
 #include <sys/types.h>
 #include <fcntl.h>
 
-#define NUMBER_OF_ARGUMENTS 6
+#define MIN_NUMBER_OF_ARGUMENTS 5
 #define PIPE_FILE_NAME "/tmp/%d"
 #define BUFFER_SIZE 1024
 
@@ -27,7 +27,7 @@ int main(int argc, char** argv)
 	int file, pipe;
 	char pipeFileName[80];
 
-	if(argc != NUMBER_OF_ARGUMENTS)
+	if(argc < MIN_NUMBER_OF_ARGUMENTS)
 	{
 		printf("Wrong number of arguments\n");
 		return -1;
@@ -60,7 +60,8 @@ int main(int argc, char** argv)
 		return -1;
 	}
 
-	if(sendSignal(atoi(argv[5])) == -1)
+	int waitTime = (argc==6)?atoi(argv[5]):getpid()%100;
+	if(sendSignal(waitTime) == -1)
 		return -1;
 
 	pipe = openPipe(pipeFileName);
@@ -123,7 +124,7 @@ long countChar(int file, char c, off_t offset, off_t size)
 
 int sendSignal(int sleepTime)
 {
-	usleep(1000*sleepTime);
+	usleep(1000*sleepTime*20); //each process wait a different time before sending the signal. 
 	if(kill(getppid(), SIGUSR1) == -1)
 	{
 		printf("Failed to send signal - %s\n", strerror(errno));
@@ -146,10 +147,8 @@ int openPipe(char* pipeFileName)
 
 int writeToPipe(int pipe,long charCounter)
 {
-	char buf[20];
-	sprintf(buf, "%ld", charCounter);
-	size_t bufSize = strlen(buf);
-	void *location = (void *)buf;
+	size_t bufSize = sizeof(long);
+	void *location = (void *)(&charCounter);
 	do
 	{
 		ssize_t temp = write(pipe,location,bufSize);
@@ -158,18 +157,16 @@ int writeToPipe(int pipe,long charCounter)
 			printf("Error Writing to pipe: %s\n", strerror(errno));
 			return -1;	
 		}
-
 		bufSize -= temp;
 		location += temp;
 	} while(bufSize>0);
 
 	return 0;
-
 }
 
 int closePipe(int pipe, char* pipeFileName)
 {
-	usleep(10*1000); //10ms before closing the pipe and delete the file
+	usleep(1000*50); //50ms before closing the pipe and delete the file
 	if(close(pipe) == -1)
 	{
 		printf("Failed to close pipe - %s\n", strerror(errno));

@@ -46,27 +46,26 @@ int main(int argc, char** argv)
 	if(fileSize == -1)
 		return -1;
 	
-	printf("file size %zu\n", fileSize);
+	//printf("file size %zu\n", fileSize);
 
 	int numberOfProcesss = determinateNumberOfCounters(fileSize);
-	printf("numberOfProcesss - %d\n", numberOfProcesss);
+	//printf("numberOfProcesss - %d\n", numberOfProcesss);
 	off_t blockSize = fileSize/numberOfProcesss;
 	off_t offset = 0;
 	for(int i=0; i<numberOfProcesss-1; i++)
 	{
-		printf("process %d offset %lu size %lu\n", i, offset, blockSize);
+	//	printf("process %d offset %lu size %lu\n", i, offset, blockSize);
 		if(createCounter(argv[1], argv[2], i, blockSize, offset) == -1)
 			return -1;
 		offset+=blockSize;
 	}
-	printf("last process offset %lu size %lu\n", offset, fileSize - offset);
+	//printf("last process offset %lu size %lu\n", offset, fileSize - offset);
 	if(createCounter(argv[1], argv[2], numberOfProcesss-1, fileSize - offset, offset) == -1) //the rest
 		return -1;
 
-	// printf("ECHILD - %d", ECHILD);
-	// printf("EINTR - %d", EINTR);
-	// printf("EINVAL - %d", EINVAL);
-	// //printf("ECHILD - %d", ECHILD);
+//	for(int i=0;i<MAX_NUMBER_OF_PROCESSES && subprocessArray[i]!=0;i++)
+//	     printf("%d\n", subprocessArray[i]);
+       
 	int currentPIDRead = 0, wstatus, wpid;
 	do
 	{
@@ -82,13 +81,19 @@ int main(int argc, char** argv)
 			currentPIDRead++;
 		}
 		wpid = wait(&wstatus);
-	//	printf("%d %d\n", wpid, errno);
 	}while (wpid != -1 || ( wpid == -1 && errno != ECHILD));
 
-	printf("end %ld\n", charCounter);
-	for(int i=0;i<MAX_NUMBER_OF_PROCESSES && subprocessArray[i]!=0;i++)
-		printf("%d\t%d\n", subprocessArray[i], readySubprocessArray[i]);
-	
+	for(int i=0; i<numberOfProcesss;i++)
+	{
+		if(readySubprocessArray[i] == 0)
+		{
+			printf("Failed to read data from all processes\n");
+			killAllProcesses();
+			return -1;
+		}
+	}
+	printf("The number of %c in %s is %ld\n", *argv[1], argv[2], charCounter);
+		
 	return 0;
 }
 
@@ -115,40 +120,44 @@ long readFromPID(int pid)
 
 int openPipe(char* pipeFileName)
 {
-	int pipe = open(pipeFileName, O_RDONLY);
-	if(pipe == -1)
-	{
-		printf("unable to open a pipe1 - %s\n", strerror(errno));
-		return -1;
-	}
+	int pipe;
+	do
+	{	
+		pipe = open(pipeFileName, O_RDONLY);
+		if(pipe == -1 && errno != EINTR)
+		{
+			printf("unable to open a pipe1 - %s\n", strerror(errno));
+			return -1;
+		}
+	}while(pipe == -1);
 	return pipe;
 }
 
 long readFromPipe(int pipe)
 {
-	char buf[20];
-	void *location = buf;
-	ssize_t len = read(pipe, location, 20);	
 	long result;
-	if(len == -1)
+	void *location = (void *) &result;
+	size_t bufSize = sizeof(long);
+
+	while(bufSize>0)
 	{
-		printf("Error reading from pipe: %s\n", strerror(errno));
-		return -1;	
-	}
-	if(sscanf(buf, "%ld", &result) != 1)
-	{
-		printf("unable to parse data from pipe %s\n",buf);
-		return -1;
+		ssize_t temp = read(pipe, location, bufSize);
+		if(temp<0 && errno != EINTR)
+		{
+			printf("unable to read from pipe - %s\n", strerror(errno));
+			return -1;
+		}
+		location += temp;
+		bufSize -= temp;
 	}
 	return result;
 }
 
 int determinateNumberOfCounters(ssize_t fileSize)
 {
-	if(fileSize<1024)
+	if(fileSize <= getpagesize()*2)
 		return 1;
-	int numberOfCounters = (int)fileSize/(1024*4);//(int)(sqrt(fileSize)+0.5);
-	printf("sqrt %d\n", numberOfCounters);
+	int numberOfCounters = (int)fileSize/(getpagesize()*2);//(int)(sqrt(fileSize)+0.5);
 	if(numberOfCounters > MAX_NUMBER_OF_PROCESSES)
 		numberOfCounters = MAX_NUMBER_OF_PROCESSES;
 	return numberOfCounters;
