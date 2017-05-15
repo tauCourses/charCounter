@@ -13,36 +13,54 @@
 #define PIPE_FILE_NAME "/tmp/%d"
 #define BUFFER_SIZE 1024
 
+//functions to get the data:
+long getCharAmountFromFile(char* charToCount, char* fileName, char* offsetStr, char* sizeStr);
 int parseOff_t(char* str, off_t* arg);
 int openFile(char* fileName);
 long countChar(int file, char c, off_t offset, off_t size);
+
+//functions for sending the data back:
+int sendAmountToDispatcher(int waitTime, long charCounter); 
 int sendSignal(int sleepTime);
 int openPipe(char* pipeFileName);
 int writeToPipe(int pipe,long charCounter);	
 int closePipe(int pipe, char* pipeFileName);
 
+
 int main(int argc, char** argv)
 {
-	off_t blockOffset, blockSize;
-	int file, pipe;
-	char pipeFileName[80];
-
 	if(argc < MIN_NUMBER_OF_ARGUMENTS)
 	{
 		printf("Wrong number of arguments\n");
 		return -1;
-	}
+	}	
 
-	if(parseOff_t(argv[3], &blockOffset) == -1)
+	long charCounter = getCharAmountFromFile(argv[1], argv[2], argv[3], argv[4]);
+	if(charCounter == -1)
 		return -1;
-	if(parseOff_t(argv[4], &blockSize) == -1)
+
+	int waitTime = (argc==6)?atoi(argv[5]):getpid()%100;
+	if(sendAmountToDispatcher(waitTime, charCounter) == -1)
 		return -1;
-	
-	file = openFile(argv[2]);
+
+ 	return 0;
+}
+
+long getCharAmountFromFile(char* charToCount, char* fileName, char* offsetStr, char* sizeStr)
+{
+	long charCounter;
+	off_t blockOffset, blockSize;
+
+	if(parseOff_t(offsetStr, &blockOffset) == -1)
+		return -1;
+	if(parseOff_t(sizeStr, &blockSize) == -1)
+		return -1;
+
+	int file = openFile(fileName);
 	if(file == -1)
 		return -1;
 
-	long charCounter = countChar(file, *argv[1], blockOffset, blockSize);
+	charCounter = countChar(file, *charToCount, blockOffset, blockSize);
 	if(charCounter == -1)
 		return -1;
 
@@ -52,30 +70,7 @@ int main(int argc, char** argv)
 		return -1;
 	}
 
-	sprintf(pipeFileName, PIPE_FILE_NAME, getpid()); 
-	
-	if(mkfifo(pipeFileName, 0666) == -1) //create a fifo pipe
-	{
-		printf("unable to create a pipe - %s\n", strerror(errno));
-		return -1;
-	}
-
-	int waitTime = (argc==6)?atoi(argv[5]):getpid()%100;
-	if(sendSignal(waitTime) == -1)
-		return -1;
-
-	pipe = openPipe(pipeFileName);
-	if(pipe == -1)
-		return -1;
-
-	if(writeToPipe(pipe, charCounter) == -1)
-		return -1;
-
- 	
-	if(closePipe(pipe, pipeFileName) == -1)
-		return -1;
-
- 	return 0;
+	return charCounter;
 }
 
 int openFile(char* fileName)
@@ -122,6 +117,33 @@ long countChar(int file, char c, off_t offset, off_t size)
 	return counter;
 }
 
+int sendAmountToDispatcher(int waitTime, long charCounter)
+{
+	char pipeFileName[80];
+	sprintf(pipeFileName, PIPE_FILE_NAME, getpid()); 
+	
+	if(mkfifo(pipeFileName, 0666) == -1) //create a fifo pipe
+	{
+		printf("unable to create a pipe - %s\n", strerror(errno));
+		return -1;
+	}
+
+	if(sendSignal(waitTime) == -1)
+		return -1;
+
+	int pipe = openPipe(pipeFileName);
+	if(pipe == -1)
+		return -1;
+
+	if(writeToPipe(pipe, charCounter) == -1)
+		return -1;
+
+ 	
+	if(closePipe(pipe, pipeFileName) == -1)
+		return -1;
+
+	return 0;
+}
 int sendSignal(int sleepTime)
 {
 	usleep(1000*sleepTime*20); //each process wait a different time before sending the signal. 

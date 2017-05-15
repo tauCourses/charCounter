@@ -14,16 +14,20 @@
 #define NUMBER_OR_ARGUMENTS 3
 #define basePipeFileName "/tmp/%d"
 
-
-void mySignalHandler(int signum, siginfo_t* info, void* ptr);
-int createCounter(char *charToCount, char* fileName, int i, off_t blockSize, off_t blockOffset);
 int setSignalHandler();
-long readFromPID(int pid);
+void mySignalHandler(int signum, siginfo_t* info, void* ptr);
+void killAllProcesses();
+
+ssize_t getFileSize(char* file);
+int createCounters(char *charToCount, char *fileName);
+int createCounter(char *charToCount, char* fileName, int i, off_t blockSize, off_t blockOffset);
+int determinateNumberOfCounters(ssize_t fileSize);
+long waitForCounters(int numberOfProcesss);
+
+long readFromPID(pid_t pid);
 int openPipe(char* pipeFileName);
 long readFromPipe(int pipe);
-ssize_t getFileSize(char* file);
-int determinateNumberOfCounters(ssize_t fileSize);
-void killAllProcesses();
+
 
 volatile int currentPIDWrite = 0;
 volatile pid_t readySubprocessArray[MAX_NUMBER_OF_PROCESSES]; 
@@ -42,64 +46,102 @@ int main(int argc, char** argv)
 	if(setSignalHandler() == -1)
 		return -1;
 
-	ssize_t fileSize = getFileSize(argv[2]);
-	if(fileSize == -1)
+	int numberOfProcesss = createCounters(argv[1], argv[2]);
+	if(numberOfProcesss == -1)
 		return -1;
+    
+    charCounter = waitForCounters(numberOfProcesss); //waits for all counters, read the data when they are ready
+    if(charCounter == -1) 
+    	return -1;
 	
-	//printf("file size %zu\n", fileSize);
-
-	int numberOfProcesss = determinateNumberOfCounters(fileSize);
-	//printf("numberOfProcesss - %d\n", numberOfProcesss);
-	off_t blockSize = fileSize/numberOfProcesss;
-	off_t offset = 0;
-	for(int i=0; i<numberOfProcesss-1; i++)
-	{
-	//	printf("process %d offset %lu size %lu\n", i, offset, blockSize);
-		if(createCounter(argv[1], argv[2], i, blockSize, offset) == -1)
-			return -1;
-		offset+=blockSize;
-	}
-	//printf("last process offset %lu size %lu\n", offset, fileSize - offset);
-	if(createCounter(argv[1], argv[2], numberOfProcesss-1, fileSize - offset, offset) == -1) //the rest
-		return -1;
-
-//	for(int i=0;i<MAX_NUMBER_OF_PROCESSES && subprocessArray[i]!=0;i++)
-//	     printf("%d\n", subprocessArray[i]);
-       
-	int currentPIDRead = 0, wstatus, wpid;
-	do
-	{
-	    while(currentPIDRead < currentPIDWrite)
-		{
-			long temp = readFromPID(readySubprocessArray[currentPIDRead]);
-			if(temp == -1)
-			{
-				killAllProcesses();
-				return -1;
-			}
-			charCounter += temp;
-			currentPIDRead++;
-		}
-		wpid = wait(&wstatus);
-	}while (wpid != -1 || ( wpid == -1 && errno != ECHILD));
-
-	for(int i=0; i<numberOfProcesss;i++)
-	{
-		if(readySubprocessArray[i] == 0)
-		{
-			printf("Failed to read data from all processes\n");
-			killAllProcesses();
-			return -1;
-		}
-	}
 	printf("The number of %c in %s is %ld\n", *argv[1], argv[2], charCounter);
 		
 	return 0;
 }
 
-long readFromPID(int pid)
+int createCounters(char *charToCount, char *fileName)
 {
-	char pipeFileName[80];
+	ssize_t fileSize = getFileSize(fileName);
+	if(fileSize == -1)
+		return -1;
+	
+	int numberOfProcesss = determinateNumberOfCounters(fileSize);
+
+	off_t blockSize = fileSize/numberOfProcesss;
+	off_t offset = 0;
+	for(int i=0; i<numberOfProcesss-1; i++)
+	{
+		if(createCounter(charToCount, fileName, i, blockSize, offset) == -1)
+			return -1;
+		offset+=blockSize;
+	}
+	if(createCounter(charToCount, fileName, numberOfProcesss-1, fileSize - offset, offset) == -1) //the rest
+		return -1;
+
+	return numberOfProcesss;
+}
+
+int createCounter(char *charToCount, char* fileName, int i, off_t blockSize, off_t blockOffset)
+{
+	pid_t pid = fork();
+	if(pid<0)
+	{
+		printf("Fork failed - %s\n", strerror(errno));
+		killAllProcesses();
+		return -1;
+	}
+	else if(pid == 0)
+	{
+		char istr[10]; 
+		sprintf(istr, "%d", i);
+
+		char sizeStr[20]; 
+		sprintf(sizeStr, "%ld", blockSize);
+
+		char offsetStr[20]; 
+		sprintf(offsetStr, "%ld", blockOffset);
+
+		char *argv[] = {"counter", charToCount, fileName, offsetStr , sizeStr, istr, NULL};
+		if(execv(argv[0], argv) == -1)
+			printf("execute counter failed on procees number %d - %s\n", i, strerror(errno));
+		killAllProcesses();
+		return -1;
+	}
+	subprocessArray[i] = pid;
+}
+
+long waitForCounters(int numberOfProcesss)
+{
+	long charCounter = 0;
+	int currentPIDRead = 0, status, wpid;
+	do //wait for all process to send signal, once signal recieved it treat it immediately 
+	{
+	    while(currentPIDRead < currentPIDWrite) //if there are processes that are readly to read
+		{
+			long temp = readFromPID(readySubprocessArray[currentPIDRead]); //read it fifo
+			if(temp == -1) //if failed
+			{
+				killAllProcesses(); //kill them all
+				return -1;
+			}
+			charCounter += temp;
+			currentPIDRead++;
+		}
+		wpid = wait(&status);
+	}while (wpid != -1 || ( wpid == -1 && errno != ECHILD)); //while there are subprocesses running
+
+	
+	if(currentPIDRead != numberOfProcesss) //check that all processes read
+	{
+		printf("Failed to read data from all processes\n");
+		return -1;
+	}
+	return charCounter;
+}
+
+long readFromPID(pid_t pid)
+{
+	char pipeFileName[40];
 
 	sprintf(pipeFileName, basePipeFileName, pid); 
 	
@@ -157,7 +199,14 @@ int determinateNumberOfCounters(ssize_t fileSize)
 {
 	if(fileSize <= getpagesize()*2)
 		return 1;
-	int numberOfCounters = (int)fileSize/(getpagesize()*2);//(int)(sqrt(fileSize)+0.5);
+	else if(fileSize < 128*1024) //100K
+		return 2;
+	else if(fileSize < 1024*512) //512K
+		return 3;
+	else if(fileSize < 1024*1024) //1M
+		return 4;
+	int numberOfCounters = 3 + fileSize/(1024*1024); 
+	
 	if(numberOfCounters > MAX_NUMBER_OF_PROCESSES)
 		numberOfCounters = MAX_NUMBER_OF_PROCESSES;
 	return numberOfCounters;
@@ -186,35 +235,6 @@ int setSignalHandler()
 		return -1;
 	}
 	return 0;
-}
-
-int createCounter(char *charToCount, char* fileName, int i, off_t blockSize, off_t blockOffset)
-{
-	pid_t pid = fork();
-	if(pid<0)
-	{
-		printf("Fork failed - %s\n", strerror(errno));
-		killAllProcesses();
-		return -1;
-	}
-	else if(pid == 0)
-	{
-		char istr[10]; 
-		sprintf(istr, "%d", i);
-
-		char sizeStr[20]; 
-		sprintf(sizeStr, "%ld", blockSize);
-
-		char offsetStr[20]; 
-		sprintf(offsetStr, "%ld", blockOffset);
-
-		char *argv[] = {"counter", charToCount, fileName, offsetStr , sizeStr, istr, NULL};
-		if(execv(argv[0], argv) == -1)
-			printf("execute counter failed on procees number %d - %s\n", i, strerror(errno));
-		killAllProcesses();
-		return -1;
-	}
-	subprocessArray[i] = pid;
 }
 
 void mySignalHandler(int signum, siginfo_t* info, void* ptr)
